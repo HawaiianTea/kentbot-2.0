@@ -1,0 +1,250 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────────────────────
+# setup.sh — Kentbot 2.0 one-time setup script for Arch Linux
+#
+# Run this once after dropping the project folder on a new machine.
+# It installs all system dependencies, sets up Python TTS, installs Ollama,
+# pulls the AI model, and installs Node.js packages.
+#
+# What it does NOT touch:
+#   • Your .env file (you fill that in yourself)
+#   • Your voice sample (drop a .wav in voice-samples/ yourself)
+#
+# How to run:
+#   chmod +x setup.sh
+#   ./setup.sh
+# ─────────────────────────────────────────────────────────────────────────────
+
+# 'set -e' makes the script stop immediately if any command fails.
+# Without it, errors are silently ignored and the script keeps going.
+set -e
+
+# ── Colors for prettier output ────────────────────────────────────────────────
+# ANSI escape codes for colored terminal text.
+# \033[ starts the code, the number sets the color, m ends it.
+# 0m resets back to normal.
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+RESET='\033[0m'
+
+# Helper functions for printing colored status messages.
+info()    { echo -e "${CYAN}[INFO]${RESET} $1"; }
+success() { echo -e "${GREEN}[OK]${RESET}   $1"; }
+warn()    { echo -e "${YELLOW}[WARN]${RESET} $1"; }
+header()  { echo -e "\n${BOLD}${GREEN}══ $1 ══${RESET}"; }
+
+# ── Make sure we're in the right directory ────────────────────────────────────
+# SCRIPT_DIR is the folder this script lives in (the project root).
+# $( ) runs a command and captures its output.
+# dirname "$0" = the directory of the script being run.
+# realpath converts it to an absolute path (handles relative paths safely).
+SCRIPT_DIR="$(realpath "$(dirname "$0")")"
+
+# Change into the project directory so all relative paths work correctly.
+cd "$SCRIPT_DIR"
+info "Working directory: $SCRIPT_DIR"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STEP 1: System packages via pacman
+# ─────────────────────────────────────────────────────────────────────────────
+header "Step 1: System packages"
+
+# Check if a command exists before trying to install it.
+# 'command -v foo' returns 0 (success) if foo is installed, 1 if not.
+# '&> /dev/null' silences all output (both stdout and stderr).
+
+install_if_missing() {
+  # $1 = command to check, $2 = pacman package name (if different)
+  local cmd="$1"
+  local pkg="${2:-$1}"   # If $2 not given, use $1 as the package name
+  if ! command -v "$cmd" &>/dev/null; then
+    info "Installing $pkg..."
+    sudo pacman -S --noconfirm "$pkg"
+    # --noconfirm skips the "Are you sure?" prompt for automated installs.
+    success "$pkg installed"
+  else
+    success "$pkg already installed"
+  fi
+}
+
+# node and npm — required to run the bot
+install_if_missing node nodejs
+install_if_missing npm npm
+
+# ffmpeg — required for audio encoding/decoding in Discord voice
+install_if_missing ffmpeg ffmpeg
+
+# python — required for XTTS voice synthesis
+install_if_missing python3 python
+
+# python-pip — required to install the TTS Python package
+# pip might be available as 'pip' or 'pip3' — check both
+if ! command -v pip3 &>/dev/null && ! command -v pip &>/dev/null; then
+  info "Installing python-pip..."
+  sudo pacman -S --noconfirm python-pip
+  success "python-pip installed"
+else
+  success "pip already installed"
+fi
+
+# yt-dlp — YouTube downloader (also available as npm package, system install is more reliable)
+install_if_missing yt-dlp yt-dlp
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STEP 2: Node.js packages
+# ─────────────────────────────────────────────────────────────────────────────
+header "Step 2: Node.js packages"
+
+info "Running npm install..."
+npm install
+success "Node.js packages installed"
+
+# Install PM2 globally — the process manager that keeps the bot running 24/7.
+# '-g' means install globally so 'pm2' is available as a command anywhere.
+if ! command -v pm2 &>/dev/null; then
+  info "Installing PM2 globally..."
+  sudo npm install -g pm2
+  success "PM2 installed"
+else
+  success "PM2 already installed"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STEP 3: Python virtual environment + Coqui TTS
+# ─────────────────────────────────────────────────────────────────────────────
+header "Step 3: Python TTS environment"
+
+# We create a Python virtual environment (venv) inside the project folder.
+# A venv is an isolated Python installation — packages installed here don't
+# interfere with the system Python or other projects.
+VENV_DIR="$SCRIPT_DIR/tts_venv"
+
+if [ ! -d "$VENV_DIR" ]; then
+  # -d checks if a directory exists. ! reverses it: "if NOT a directory"
+  info "Creating Python virtual environment at tts_venv/..."
+  python3 -m venv "$VENV_DIR"
+  # python3 -m venv <path> creates a new virtual environment at that path.
+  success "Virtual environment created"
+else
+  success "Virtual environment already exists"
+fi
+
+# Install or update the TTS package inside the venv.
+# We use the venv's pip directly to ensure it installs into the venv, not globally.
+VENV_PIP="$VENV_DIR/bin/pip"
+VENV_PYTHON="$VENV_DIR/bin/python3"
+
+# Check if TTS is already installed in the venv.
+if ! "$VENV_PYTHON" -c "import TTS" &>/dev/null; then
+  info "Installing Coqui TTS (this may take a few minutes)..."
+  # Upgrade pip first — old pip versions sometimes fail on complex packages.
+  "$VENV_PIP" install --upgrade pip --quiet
+  # Install TTS. This downloads ~500MB of dependencies.
+  "$VENV_PIP" install TTS
+  success "Coqui TTS installed in venv"
+else
+  success "Coqui TTS already installed in venv"
+fi
+
+info "Note: The XTTS v2 model (~1.8GB) downloads on first use, not during setup."
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STEP 4: Ollama (local LLM server)
+# ─────────────────────────────────────────────────────────────────────────────
+header "Step 4: Ollama (local LLM)"
+
+if ! command -v ollama &>/dev/null; then
+  info "Installing Ollama..."
+  # The official Ollama install script — downloads and installs the binary.
+  curl -fsSL https://ollama.com/install.sh | sh
+  # -f = fail silently on HTTP errors (instead of showing the error page)
+  # -s = silent (no progress bar)
+  # -S = show error if -s is used (override silent for errors)
+  # -L = follow redirects
+  # | sh pipes the downloaded script directly to the shell to run it.
+  success "Ollama installed"
+else
+  success "Ollama already installed"
+fi
+
+# Start the Ollama service if it's not already running.
+# systemctl is the service manager on systemd-based systems (including Arch).
+if ! systemctl is-active --quiet ollama 2>/dev/null; then
+  info "Starting Ollama service..."
+  # Try systemctl first (if Ollama registered a systemd service).
+  if systemctl start ollama 2>/dev/null; then
+    success "Ollama service started"
+  else
+    # If there's no systemd service, start it in the background manually.
+    warn "Could not start via systemctl — starting Ollama in background..."
+    ollama serve &>/dev/null &
+    # & runs the command in the background (detached from this script).
+    # Give it a moment to start up before we try to pull a model.
+    sleep 3
+    success "Ollama started in background"
+  fi
+else
+  success "Ollama is already running"
+fi
+
+# Pull the AI model if it's not already downloaded.
+# 'ollama list' shows installed models. We grep for our model name.
+if ! ollama list 2>/dev/null | grep -q 'llama3.2:3b'; then
+  info "Downloading llama3.2:3b model (this may take a few minutes — ~2GB)..."
+  ollama pull llama3.2:3b
+  success "llama3.2:3b model downloaded"
+else
+  success "llama3.2:3b model already downloaded"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STEP 5: Create required directories
+# ─────────────────────────────────────────────────────────────────────────────
+header "Step 5: Directories"
+
+# Create the logs directory (PM2 writes logs here).
+mkdir -p logs
+success "logs/ directory ready"
+
+# Create the TTS output directory (where generated speech files are saved).
+mkdir -p /tmp/kentbot-tts
+success "/tmp/kentbot-tts/ directory ready"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Done! Print next steps.
+# ─────────────────────────────────────────────────────────────────────────────
+echo ""
+echo -e "${BOLD}${GREEN}════════════════════════════════════════${RESET}"
+echo -e "${BOLD}${GREEN}  Setup complete!${RESET}"
+echo -e "${BOLD}${GREEN}════════════════════════════════════════${RESET}"
+echo ""
+echo -e "${BOLD}Remaining steps (manual):${RESET}"
+echo ""
+echo -e "  ${CYAN}1.${RESET} Copy and fill in your .env file:"
+echo -e "     ${YELLOW}cp .env.example .env${RESET}"
+echo -e "     Then edit .env and set: DISCORD_TOKEN, CLIENT_ID, OPENAI_API_KEY"
+echo ""
+echo -e "  ${CYAN}2.${RESET} Add a voice sample for TTS:"
+echo -e "     Drop a .wav file into ${YELLOW}voice-samples/${RESET}"
+echo -e "     Set ${YELLOW}TTS_VOICE_SAMPLE=voice-samples/yourfile.wav${RESET} in .env"
+echo -e "     (See voice-samples/README.md for details)"
+echo ""
+echo -e "  ${CYAN}3.${RESET} Register slash commands with Discord (once):"
+echo -e "     ${YELLOW}node deploy-commands.js${RESET}"
+echo ""
+echo -e "  ${CYAN}4.${RESET} Start the bot:"
+echo -e "     ${YELLOW}pm2 start ecosystem.config.cjs${RESET}"
+echo ""
+echo -e "  ${CYAN}5.${RESET} (Optional) Auto-start on boot:"
+echo -e "     ${YELLOW}pm2 save && pm2 startup${RESET}"
+echo -e "     Then run the command it prints."
+echo ""
+echo -e "${CYAN}Useful commands:${RESET}"
+echo -e "  pm2 status          — see if all 3 processes are running"
+echo -e "  pm2 logs            — tail all log output"
+echo -e "  pm2 logs kentbot-bot — tail just the Discord bot logs"
+echo -e "  pm2 restart all     — restart everything"
+echo ""
