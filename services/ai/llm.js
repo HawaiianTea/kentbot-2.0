@@ -157,8 +157,11 @@ async function callOllama(systemPrompt, userMessage) {
 
   // Check if Ollama returned an error HTTP status code.
   if (!response.ok) {
-    // response.ok is true for status codes 200-299, false for errors like 500.
-    throw new Error(`Ollama returned HTTP ${response.status}. Is Ollama running? Try: ollama serve`);
+    // Read the response body to get the actual error message from Ollama.
+    // A 404 usually means the model name doesn't match — e.g. pulled llama3.2:latest
+    // but config says llama3.2:3b. The body will say exactly what's wrong.
+    const errorBody = await response.text().catch(() => '(no response body)');
+    throw new Error(`Ollama HTTP ${response.status}: ${errorBody} — check that model "${OLLAMA.MODEL}" is pulled (run: ollama list)`);
   }
 
   // Parse the JSON response body.

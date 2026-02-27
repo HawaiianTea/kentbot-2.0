@@ -1,0 +1,3 @@
+Fix DJ intro not playing/working, might be something with the llm, maybe add elevenlabs fallback
+
+the pictures made for the recipes work, but the prompt needs a bit of fixing.

@@ -273,28 +273,54 @@ else
   success "Ollama already installed"
 fi
 
-# Start the Ollama service if it's not already running.
-# systemctl is the service manager on systemd-based systems (including Arch).
-if ! systemctl is-active --quiet ollama 2>/dev/null; then
-  info "Starting Ollama service..."
-  # Try systemctl first (if Ollama registered a systemd service).
-  if systemctl start ollama 2>/dev/null; then
-    success "Ollama service started"
-  else
-    # If there's no systemd service, start it in the background manually.
-    warn "Could not start via systemctl — starting Ollama in background..."
+# ── Start the Ollama service ──────────────────────────────────────────────────
+# When ollama is installed via pacman it registers a systemd service that runs
+# as a dedicated 'ollama' user. We must use systemctl to manage it — NOT run
+# 'ollama serve' manually, because that would try to bind the same port (11434)
+# and cause a "port already in use" error.
+#
+# 'enable --now' does two things at once:
+#   enable = make the service start automatically on every boot
+#   --now  = also start it immediately right now
+info "Enabling and starting Ollama systemd service..."
+systemctl enable --now ollama 2>/dev/null || {
+  # Fallback: systemctl failed (no systemd, or service file not registered).
+  # Only start manually if nothing is already listening on port 11434.
+  if ! curl -s http://localhost:11434 &>/dev/null; then
+    warn "systemctl failed — starting Ollama manually in background..."
     ollama serve &>/dev/null &
-    # & runs the command in the background (detached from this script).
-    # Give it a moment to start up before we try to pull a model.
-    sleep 3
-    success "Ollama started in background"
+  else
+    info "Ollama is already listening on port 11434"
   fi
+}
+
+# ── Wait for Ollama to be ready ───────────────────────────────────────────────
+# systemctl returns immediately after starting the service, but Ollama needs a
+# moment to actually bind its port and start accepting requests.
+# Polling the HTTP endpoint is more reliable than a fixed sleep.
+info "Waiting for Ollama to be ready (up to 30 seconds)..."
+OLLAMA_READY=false
+for i in $(seq 1 30); do
+  # curl -s = silent (no progress), -o /dev/null = discard body, -f = fail on error
+  if curl -sf http://localhost:11434 -o /dev/null 2>/dev/null; then
+    OLLAMA_READY=true
+    break
+  fi
+  sleep 1
+done
+
+if [ "$OLLAMA_READY" = "true" ]; then
+  success "Ollama is ready"
 else
-  success "Ollama is already running"
+  warn "Ollama did not respond within 30 seconds — model pull may fail"
 fi
 
-# Pull the AI model if it's not already downloaded.
-# 'ollama list' shows installed models. We grep for our model name.
+# ── Pull the AI model ─────────────────────────────────────────────────────────
+# IMPORTANT: The model pull goes through the running Ollama service (via HTTP),
+# not directly to disk. This means the model is stored in the service's data
+# directory (owned by the 'ollama' user), NOT in root's home directory.
+# This is correct — pulling as root still works because 'ollama pull' is just
+# a client that sends the request to the running service.
 if ! ollama list 2>/dev/null | grep -q 'llama3.2:3b'; then
   info "Downloading llama3.2:3b model (this may take a few minutes — ~2GB)..."
   ollama pull llama3.2:3b

@@ -145,7 +145,12 @@ function runTTSScript(text, voiceSamplePath, outputPath) {
       text,             // argv[1] in the Python script
       voiceSamplePath,  // argv[2] in the Python script
       outputPath        // argv[3] in the Python script
-    ]);
+    ], {
+      // COQUI_TOS_AGREED=1 bypasses the interactive Terms of Service prompt that
+      // XTTS v2 shows when downloading the model for the first time. Without this,
+      // the script hangs waiting for y/n input that never comes (no terminal = EOFError).
+      env: { ...process.env, COQUI_TOS_AGREED: '1' }
+    });
 
     // Capture any output Python prints to stdout (normal messages).
     let stdoutData = '';
