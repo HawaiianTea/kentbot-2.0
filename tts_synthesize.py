@@ -86,6 +86,17 @@ def main():
 
     # Import TTS here (inside the function) so startup is faster if we hit an error above.
     # 'from X import Y' imports just Y from the X package (more specific than 'import X').
+
+    # PyTorch 2.6 changed torch.load to default weights_only=True, which breaks
+    # Coqui TTS's model loading (it pickles custom classes that aren't on the allowlist).
+    # We patch torch.load to restore the old default before TTS is imported.
+    import torch
+    _real_torch_load = torch.load
+    def _patched_torch_load(*args, **kwargs):
+        kwargs.setdefault('weights_only', False)
+        return _real_torch_load(*args, **kwargs)
+    torch.load = _patched_torch_load
+
     from TTS.api import TTS
     # TTS is the main class from the Coqui TTS library.
 

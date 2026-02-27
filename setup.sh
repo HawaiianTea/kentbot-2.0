@@ -234,11 +234,14 @@ else
   VENV_PIP="$VENV_DIR/bin/pip"
   VENV_PYTHON="$VENV_DIR/bin/python3"
 
-  # Check if TTS is already installed in the venv.
+  # Upgrade pip first — old pip versions sometimes fail on complex packages.
+  "$VENV_PIP" install --upgrade pip --quiet
+
+  # Install Coqui TTS if not present.
+  # Note: TTS's own dependency resolver will pull in whatever torch/transformers
+  # version it wants. We explicitly pin them to correct versions right after.
   if ! "$VENV_PYTHON" -c "import TTS" &>/dev/null; then
     info "Installing Coqui TTS (this may take a few minutes)..."
-    # Upgrade pip first — old pip versions sometimes fail on complex packages.
-    "$VENV_PIP" install --upgrade pip --quiet
     # Install TTS. This downloads ~500MB of dependencies.
     "$VENV_PIP" install TTS
     success "Coqui TTS installed in venv"
@@ -246,7 +249,36 @@ else
     success "Coqui TTS already installed in venv"
   fi
 
-  info "Note: The XTTS v2 model (~1.8GB) downloads on first use, not during setup."
+  # ── Pin torch and torchaudio to 2.5.1 ──────────────────────────────────────
+  # Coqui TTS 0.22.0 breaks with torch/torchaudio >= 2.6 due to two changes:
+  #   - torch 2.6+: torch.load defaults to weights_only=True, breaking model loading
+  #   - torchaudio 2.6+: requires torchcodec for audio loading (not installed by default)
+  # We pin to 2.5.1 (last compatible version) and enforce this on every setup run
+  # so that 'pip install --upgrade' or a re-run on an existing install can't break it.
+  TORCH_VER=$("$VENV_PYTHON" -c "import torch; print(torch.__version__)" 2>/dev/null || echo "")
+  TORCHAUDIO_VER=$("$VENV_PYTHON" -c "import torchaudio; print(torchaudio.__version__)" 2>/dev/null || echo "")
+  if [ "$TORCH_VER" != "2.5.1" ] || [ "$TORCHAUDIO_VER" != "2.5.1" ]; then
+    info "Pinning torch and torchaudio to 2.5.1 (current: torch=$TORCH_VER torchaudio=$TORCHAUDIO_VER)..."
+    # This may download ~800MB if torch needs to be downgraded from a newer version.
+    "$VENV_PIP" install "torch==2.5.1" "torchaudio==2.5.1"
+    success "torch and torchaudio pinned to 2.5.1"
+  else
+    success "torch/torchaudio already at correct version (2.5.1)"
+  fi
+
+  # ── Pin transformers to 4.38.2 ─────────────────────────────────────────────
+  # Coqui TTS 0.22.0 uses BeamSearchScorer from the transformers library, which
+  # was removed in transformers 4.40+. Pin to 4.38.2 (last compatible version).
+  TRANSFORMERS_VER=$("$VENV_PYTHON" -c "import transformers; print(transformers.__version__)" 2>/dev/null || echo "")
+  if [ "$TRANSFORMERS_VER" != "4.38.2" ]; then
+    info "Pinning transformers to 4.38.2 (current: $TRANSFORMERS_VER)..."
+    "$VENV_PIP" install "transformers==4.38.2"
+    success "transformers pinned to 4.38.2"
+  else
+    success "transformers already at correct version (4.38.2)"
+  fi
+
+  info "Note: The XTTS v2 model (~1.8GB) downloads automatically on first DJ intro."
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
