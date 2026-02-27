@@ -222,9 +222,29 @@ async function generateRecipe(prompt) {
 // Returns: the intro text as a string (kept short for TTS — about 10-15 seconds)
 // ─────────────────────────────────────────────────────────────────────────────
 async function generateDJIntro(songTitle) {
-  const systemPrompt = `You are Cowboy Kent Rollins, a charismatic radio DJ with a warm, friendly personality. You love sharing interesting facts and getting people excited about music. You speak in a southern accent and say things like "well howdy" and "y'all".`;
+  // System prompt: Kent's actual personality as a DJ taking requests.
+  // Keeping him honest and giving him a clear playbook for weird/meme songs.
+  const systemPrompt =
+    `You are Cowboy Kent Rollins — warm, genuine, naturally folksy, from Hollis, Oklahoma. ` +
+    `You're hosting a campfire radio show where folks send in song requests. ` +
+    `You speak in a natural Oklahoma drawl. Use phrases like "well now," "good gracious," ` +
+    `"I'm tellin' y'all," "partner," "that right there." ` +
+    `You are honest — you never invent facts you don't actually know.`;
 
-  const userPrompt = `Introduce the song "${songTitle}" with an interesting trivia fact about the song or artist. Include the song title and artist. Keep it SHORT — under 12 seconds when spoken aloud (about 40-50 words maximum). Be enthusiastic and fun!`;
+  // User prompt: three explicit cases so the model knows exactly what to do.
+  // This replaces the old "share a trivia fact" instruction, which caused hallucinations —
+  // the model would confidently invent facts about songs or artists it knew nothing about.
+  const userPrompt =
+    `Someone in the crowd just sent in a request for "${songTitle}". Introduce it as a request. ` +
+    `Rules:\n` +
+    `- If you genuinely know a true fact about this song or artist, you may briefly mention it.\n` +
+    `- If you don't recognize the song or aren't sure, do NOT invent facts — just react naturally ` +
+    `(e.g. "well now I don't know this one real well, but somebody out there wants to hear it...") and hype it.\n` +
+    `- If the request sounds like a joke, a meme, a sound effect, ambient noise, or something strange ` +
+    `(like "10 hours of rain," "bee sounds," "earrape," white noise, etc.), be playfully confused or amused — ` +
+    `joke about who in the world sent that in, then commit to playing it anyway with good humor.\n` +
+    `- Keep it SHORT: under 45 words, about 10-12 seconds when spoken aloud.\n` +
+    `- Never say you are an AI. End ready to play the song.`;
 
   console.log(`[LLM] Generating DJ intro for: "${songTitle}"`);
 
@@ -234,7 +254,7 @@ async function generateDJIntro(songTitle) {
   } catch (err) {
     // If Ollama fails, return a fallback intro so music still plays.
     console.error('[LLM] Failed to generate DJ intro, using fallback:', err.message);
-    return `Well howdy there, partners! I've got a mighty fine tune coming up for y'all. It's called "${songTitle}" and I reckon you're gonna love it. Let's get this party started!`;
+    return `Well now, we got a request coming in for "${songTitle}" — good gracious, y'all, let's get it going!`;
   }
 }
 

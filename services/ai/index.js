@@ -121,11 +121,13 @@ app.post('/recipe', async (req, res) => {
     }
 
     // Send back all the data the bot needs to build the Discord embed.
+    // imagePath is a local file path (e.g. /tmp/kentbot-recipe/recipe-abc123.png).
+    // The bot reads this file and attaches it directly to the Discord message.
     res.json({
       text: recipeResult.text,
       rarity: recipeResult.rarity,
       name: recipeResult.name,
-      imageUrl: finalImageUrl   // null if image generation failed
+      imagePath: finalImageUrl   // null if image generation failed, otherwise a file path
     });
 
   } catch (err) {
@@ -222,5 +224,12 @@ app.listen(AI_SERVICE_PORT, () => {
   console.log(`[AI SERVICE] Running on port ${AI_SERVICE_PORT}`);
   console.log(`[AI SERVICE] Health check: http://localhost:${AI_SERVICE_PORT}/health`);
   console.log(`[AI SERVICE] Using Ollama model: ${require('../../shared/config').OLLAMA.MODEL}`);
-  console.log(`[AI SERVICE] TTS voice sample: ${require('../../shared/config').TTS.VOICE_SAMPLE}`);
+  const { TTS } = require('../../shared/config');
+  console.log(`[AI SERVICE] TTS provider: ${TTS.PROVIDER}`);
+  if (TTS.PROVIDER === 'local') {
+    console.log(`[AI SERVICE] TTS voice sample: ${TTS.VOICE_SAMPLE}`);
+  } else if (TTS.PROVIDER === 'elevenlabs') {
+    console.log(`[AI SERVICE] ElevenLabs voice ID: ${TTS.ELEVENLABS_VOICE_ID || '(not set)'}`);
+    console.log(`[AI SERVICE] ElevenLabs model: ${TTS.ELEVENLABS_MODEL}`);
+  }
 });

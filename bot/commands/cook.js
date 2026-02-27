@@ -104,8 +104,10 @@ async function execute(interaction) {
     }
 
     // Parse the recipe data from the AI service.
-    const { text, rarity, name, imageUrl } = await response.json();
+    const { text, rarity, name, imagePath } = await response.json();
     // Destructuring: pulls these four properties out of the response object.
+    // imagePath is a local file path to a PNG (e.g. /tmp/kentbot-recipe/recipe-abc123.png),
+    // or null if image generation failed. We attach it as a file so Discord displays it inline.
 
     if (!text) {
       await interaction.editReply({ content: '❌ Got an empty recipe. Try again!' });
@@ -131,15 +133,20 @@ async function execute(interaction) {
       .setDescription(description)  // The main content (the recipe text)
       .setTimestamp();          // Shows when the recipe was generated
 
-    // Add the image if one was generated.
-    if (imageUrl) {
-      embed.setImage(imageUrl);
-      // .setImage() adds a large image below the description.
-      // Discord automatically fetches and displays the image URL.
+    // Build the reply payload — start with just the embed.
+    const replyPayload = { embeds: [embed] };
+
+    // If an image was generated, attach it as a file.
+    // Discord.js reads the file from the path and uploads it with the message.
+    // 'attachment://recipe.png' is a special Discord URL that refers to the
+    // attached file named 'recipe.png' — this is how embeds display attached images.
+    if (imagePath) {
+      replyPayload.files = [{ attachment: imagePath, name: 'recipe.png' }];
+      embed.setImage('attachment://recipe.png');
     }
 
-    // Send the finished embed as the reply.
-    await interaction.editReply({ embeds: [embed] });
+    // Send the finished embed (with image attached if available) as the reply.
+    await interaction.editReply(replyPayload);
     // .editReply() replaces the "Bot is thinking..." message with our embed.
     // { embeds: [embed] } = an array of embeds to include in the message.
 

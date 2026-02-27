@@ -1,3 +1,5 @@
-Fix DJ intro not playing/working, might be something with the llm, maybe add elevenlabs fallback
+the pictures made for the recipes work, but the prompt needs a bit of tuning to get the style how i want
 
-the pictures made for the recipes work, but the prompt needs a bit of fixing.
+the tts dj works, but is way too slow on weaker hardware. needs some kind of toggle, or just comment all the llm tts and re add the elevenlabs api.
+
+some discord messages need tweaking. there does not need to be an added to queue message as there is already a queue message we can read. also said queue should delete itself when finished.

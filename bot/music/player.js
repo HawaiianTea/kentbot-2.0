@@ -33,7 +33,6 @@ const {
   getGuildState,
   setGuildState,
   resetGuildState,
-  getTextChannel,
   getDJMode
 } = require('../state');
 
@@ -195,8 +194,10 @@ async function startPlayback(guildId, voiceChannel) {
     if (!nextSong || !nextSong.url) {
       // No more songs in queue — stop playing.
       console.log(`[PLAYER] Queue is empty for guild ${guildId}, stopping`);
-      resetGuildState(guildId);
+      // clearNowPlayingMessage must run BEFORE resetGuildState — resetting state
+      // wipes statusMessage to null, which would prevent the embed from being deleted.
       await clearNowPlayingMessage(guildId);
+      resetGuildState(guildId);
       return;
     }
 

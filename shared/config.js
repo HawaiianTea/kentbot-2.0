@@ -68,9 +68,27 @@ const OLLAMA = {
 
 // ── TTS (Text-to-Speech) Settings ─────────────────────────────────────────────
 const TTS = {
+  // Which TTS provider to use: 'local' (Coqui XTTS v2) or 'elevenlabs' (cloud API).
+  // Use 'local' on powerful hardware (6GB+ VRAM or fast CPU).
+  // Use 'elevenlabs' for fast, high-quality cloud synthesis (requires API key).
+  PROVIDER: process.env.TTS_PROVIDER || 'local',
+
+  // ── Local XTTS v2 settings (only used when PROVIDER = 'local') ──────────────
   // Path to the voice sample .wav file that XTTS will clone the voice from.
   // The file should be clear audio with no background noise, at least 6 seconds.
   VOICE_SAMPLE: process.env.TTS_VOICE_SAMPLE || 'voice-samples/kent.wav',
+
+  // ── ElevenLabs settings (only used when PROVIDER = 'elevenlabs') ────────────
+  // Your ElevenLabs API key from https://elevenlabs.io/
+  ELEVENLABS_API_KEY: process.env.ELEVENLABS_API_KEY || '',
+
+  // The voice ID to use. Find IDs in your ElevenLabs voice library, or use
+  // a pre-made voice. Example: 'JBFqnCBsd6RMkjVDRZzb' is "George" (deep, warm).
+  ELEVENLABS_VOICE_ID: process.env.ELEVENLABS_VOICE_ID || '',
+
+  // ElevenLabs model ID. 'eleven_flash_v2_5' is the fastest (lowest latency),
+  // good for DJ intros. 'eleven_multilingual_v2' is highest quality but slower.
+  ELEVENLABS_MODEL: process.env.ELEVENLABS_MODEL || 'eleven_flash_v2_5',
 
   // Where generated TTS audio files are saved before being played.
   // /tmp is a temporary folder that the OS cleans up automatically.

@@ -1,27 +1,19 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// services/ai/tts.js — Local text-to-speech via Coqui XTTS v2
+// services/ai/tts.js — Text-to-speech synthesis (local XTTS v2 or ElevenLabs)
 //
-// This file converts text into speech audio using XTTS v2, a local AI model
-// that can clone a voice from a short audio sample.
+// Supports two TTS providers, selected by TTS_PROVIDER in your .env file:
 //
-// How it works:
-//   1. We spawn a Python script (tts_synthesize.py) as a subprocess
-//   2. The Python script loads XTTS v2, clones the voice from the sample file,
-//      and synthesizes the text into a .wav audio file
-//   3. We return the path to that audio file
-//   4. The bot then reads that file and plays it in the Discord voice channel
+//   'local' (default) — Coqui XTTS v2
+//     Runs entirely on your machine. Clones a custom voice from a .wav sample.
+//     Slow on weak hardware (~10-60 seconds per clip depending on CPU/GPU).
+//     Setup: pip install TTS, add a voice-samples/kent.wav file.
 //
-// Why Python instead of JavaScript?
-//   Coqui TTS / XTTS v2 only has a Python library. We bridge the gap by
-//   running Python from Node.js using child_process.spawn().
+//   'elevenlabs' — ElevenLabs cloud API
+//     Fast cloud synthesis (~1-2 seconds). Requires an API key and chosen voice.
+//     Setup: set ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID in .env.
+//     Returns an .mp3 file (Discord plays it fine via ffmpeg).
 //
-// Setup required:
-//   pip install TTS
-//   And place a voice sample .wav file at the path set in TTS_VOICE_SAMPLE.
-//
-// Performance note:
-//   The first call loads the XTTS model (~30 seconds). We keep the Python
-//   process alive between calls so subsequent calls are faster (~5-10 seconds).
+// Both providers return a local file path the bot can play in voice chat.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // child_process is built into Node.js for running other programs.
@@ -73,15 +65,30 @@ const PYTHON_BIN = fs.existsSync(VENV_PYTHON) ? VENV_PYTHON : 'python3';
 // ─────────────────────────────────────────────────────────────────────────────
 // synthesize(text)
 //
-// Converts text to speech using XTTS v2 and the configured voice sample.
+// Converts text to speech using whichever provider is configured.
+// Dispatches to synthesizeLocal() or synthesizeElevenLabs() based on TTS_PROVIDER.
 //
 // Parameters:
 //   text — the text to speak aloud (e.g. "Well howdy, partners!")
 //
-// Returns: the file path to the generated .wav audio file (string)
+// Returns: the file path to the generated audio file (string)
 //          Throws an error if synthesis fails.
 // ─────────────────────────────────────────────────────────────────────────────
 async function synthesize(text) {
+  if (TTS.PROVIDER === 'elevenlabs') {
+    return synthesizeElevenLabs(text);
+  }
+  // Default to local XTTS v2.
+  return synthesizeLocal(text);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// synthesizeLocal(text)
+//
+// Synthesizes speech using the local Coqui XTTS v2 model via a Python subprocess.
+// Clones the voice from the configured voice sample .wav file.
+// ─────────────────────────────────────────────────────────────────────────────
+async function synthesizeLocal(text) {
   // Validate that the voice sample file exists before trying to use it.
   const voiceSamplePath = path.resolve(TTS.VOICE_SAMPLE);
   // path.resolve() converts a relative path like "voice-samples/kent.wav"
@@ -103,8 +110,7 @@ async function synthesize(text) {
   const outputPath = path.join(TTS.OUTPUT_DIR, `tts-${uniqueId}.wav`);
   // Example result: "/tmp/kentbot-tts/tts-a3f9c12b7e004d1a.wav"
 
-  console.log(`[TTS] Synthesizing text: "${text.slice(0, 60)}..."`);
-  // .slice(0, 60) shows just the first 60 characters in the log to keep it readable.
+  console.log(`[TTS/local] Synthesizing: "${text.slice(0, 60)}..."`);
 
   // Run the Python TTS script as a subprocess.
   // We pass the text, voice sample path, and output path as command-line arguments.
@@ -115,8 +121,75 @@ async function synthesize(text) {
     throw new Error('TTS script ran but no output file was created');
   }
 
-  console.log(`[TTS] Synthesis complete: ${outputPath}`);
+  console.log(`[TTS/local] Synthesis complete: ${outputPath}`);
   return outputPath;  // Return the path so the bot can play this file
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// synthesizeElevenLabs(text)
+//
+// Synthesizes speech by calling the ElevenLabs REST API.
+// Returns a path to the downloaded .mp3 file in the TTS output directory.
+//
+// API docs: https://elevenlabs.io/docs/api-reference/text-to-speech
+// The API returns raw MP3 bytes in the response body.
+// ─────────────────────────────────────────────────────────────────────────────
+async function synthesizeElevenLabs(text) {
+  // Validate required config.
+  if (!TTS.ELEVENLABS_API_KEY) {
+    throw new Error('ELEVENLABS_API_KEY is not set in your .env file.');
+  }
+  if (!TTS.ELEVENLABS_VOICE_ID) {
+    throw new Error('ELEVENLABS_VOICE_ID is not set in your .env file.');
+  }
+
+  console.log(`[TTS/elevenlabs] Synthesizing: "${text.slice(0, 60)}..."`);
+
+  // Call the ElevenLabs text-to-speech API.
+  // POST /v1/text-to-speech/{voice_id} — returns raw MP3 audio bytes.
+  const response = await fetch(
+    `https://api.elevenlabs.io/v1/text-to-speech/${TTS.ELEVENLABS_VOICE_ID}`,
+    {
+      method: 'POST',
+      headers: {
+        'xi-api-key': TTS.ELEVENLABS_API_KEY,  // Auth header ElevenLabs requires
+        'Content-Type': 'application/json',
+        'Accept': 'audio/mpeg'                 // Ask for MP3 format
+      },
+      body: JSON.stringify({
+        text: text,
+        model_id: TTS.ELEVENLABS_MODEL,
+        // voice_settings are optional — these are the API defaults, good for DJ speech.
+        voice_settings: {
+          stability: 0.5,         // 0–1: higher = more consistent, lower = more expressive
+          similarity_boost: 0.75  // 0–1: how closely to match the voice clone
+        }
+      })
+    }
+  );
+
+  if (!response.ok) {
+    // Try to extract an error message from the response body.
+    const errText = await response.text().catch(() => '');
+    throw new Error(`ElevenLabs API error ${response.status}: ${errText}`);
+  }
+
+  // The response body IS the audio — read it as a binary buffer.
+  // response.arrayBuffer() reads the whole response as raw bytes.
+  // Buffer.from() converts it to a Node.js Buffer we can write to disk.
+  const audioBuffer = Buffer.from(await response.arrayBuffer());
+
+  // Save the MP3 to disk so the bot can play it from a file path.
+  const uniqueId = crypto.randomBytes(8).toString('hex');
+  const outputPath = path.join(TTS.OUTPUT_DIR, `tts-${uniqueId}.mp3`);
+  // Note: .mp3 extension — ElevenLabs returns MP3. Discord plays it fine via ffmpeg.
+
+  fs.writeFileSync(outputPath, audioBuffer);
+  // writeFileSync() writes the buffer to disk synchronously.
+  // Synchronous is fine here since we just got the bytes and the file is small.
+
+  console.log(`[TTS/elevenlabs] Synthesis complete: ${outputPath} (${audioBuffer.length} bytes)`);
+  return outputPath;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

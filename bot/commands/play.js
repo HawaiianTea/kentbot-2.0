@@ -114,19 +114,14 @@ async function execute(interaction) {
       return;
     }
 
-    // Parse the song info returned by the music service.
-    const song = await response.json();
-    // song = { title, url, duration, thumbnail, position }
-
     // Check if music is already playing in this guild.
     const state = getGuildState(guildId);
 
     if (state.isPlaying) {
       // Music is already playing — the song was added to the queue.
-      // Edit the deferred reply to show the "Added to queue" confirmation.
-      await interaction.editReply({
-        content: `✅ Added to queue (#${song.position}): **${song.title}**`
-      });
+      // The Now Playing embed already shows the updated queue, so just delete
+      // the deferred "thinking..." reply silently.
+      await interaction.deleteReply().catch(() => {});
       return;
     }
 
