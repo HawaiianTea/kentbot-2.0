@@ -24,9 +24,12 @@
 require('dotenv').config();
 
 // REST is the Discord REST API client — used for making direct HTTP API calls.
-const { REST, Routes } = require('@discordjs/rest');
+const { REST } = require('@discordjs/rest');
 // REST handles authentication and request formatting for the Discord API.
+
+// Routes was moved out of @discordjs/rest in v2.x — it now lives in discord-api-types.
 // Routes provides helper functions to build the correct API URL paths.
+const { Routes } = require('discord-api-types/v10');
 
 // path and fs help us find and load command files.
 const path = require('path');

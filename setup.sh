@@ -43,9 +43,18 @@ header()  { echo -e "\n${BOLD}${GREEN}══ $1 ══${RESET}"; }
 # realpath converts it to an absolute path (handles relative paths safely).
 SCRIPT_DIR="$(realpath "$(dirname "$0")")"
 
+# Determine the real (non-root) user who invoked this script.
+# When run as 'sudo bash setup.sh', sudo sets $SUDO_USER to the original username.
+# This is needed because makepkg refuses to run as root — we drop back down to
+# this user for that specific step.
+# If $SUDO_USER is empty (script was run directly as root with no sudo), fall back
+# to $USER. In that case makepkg will still fail, but we warn clearly below.
+REAL_USER="${SUDO_USER:-$USER}"
+
 # Change into the project directory so all relative paths work correctly.
 cd "$SCRIPT_DIR"
 info "Working directory: $SCRIPT_DIR"
+info "Running as: $(whoami) (real user: $REAL_USER)"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 1: System packages via pacman
@@ -155,11 +164,15 @@ if [ -z "$PYTHON_BIN" ]; then
   TMP_AUR=$(mktemp -d)
   git clone https://aur.archlinux.org/python311.git "$TMP_AUR/python311"
 
-  # makepkg must be run as a non-root user (it refuses to run as root for safety).
-  # -s = install missing dependencies via pacman
-  # -i = install the package after building
+  # makepkg refuses to run as root — give ownership of the build dir to the real user.
+  chown -R "$REAL_USER" "$TMP_AUR"
+
+  # Drop back down to the real user just for the makepkg step.
+  # sudo -u runs the following command as the specified user.
+  # -s = install missing build dependencies via pacman automatically
+  # -i = install the finished package automatically
   # --noconfirm = skip interactive prompts
-  (cd "$TMP_AUR/python311" && makepkg -si --noconfirm) || true
+  sudo -u "$REAL_USER" bash -c "cd '$TMP_AUR/python311' && makepkg -si --noconfirm" || true
   # '|| true' prevents set -e from stopping the script if the build fails.
 
   # Clean up the temp build directory.
@@ -195,14 +208,25 @@ else
   # interfere with the system Python or other projects.
   VENV_DIR="$SCRIPT_DIR/tts_venv"
 
+  # If a venv already exists, check that it was built with a compatible Python.
+  # A previous failed setup attempt may have created a venv with Python 3.12+,
+  # which will still fail even though we now have python3.11 available.
+  if [ -d "$VENV_DIR" ]; then
+    VENV_MINOR=$("$VENV_DIR/bin/python3" -c "import sys; print(sys.version_info.minor)" 2>/dev/null || echo "0")
+    VENV_MAJOR=$("$VENV_DIR/bin/python3" -c "import sys; print(sys.version_info.major)" 2>/dev/null || echo "0")
+    if [ "$VENV_MAJOR" != "3" ] || [ "$VENV_MINOR" -lt 9 ] || [ "$VENV_MINOR" -gt 11 ]; then
+      warn "Existing venv uses Python $VENV_MAJOR.$VENV_MINOR (incompatible). Recreating with $PYTHON_BIN..."
+      rm -rf "$VENV_DIR"
+    fi
+  fi
+
   if [ ! -d "$VENV_DIR" ]; then
-    # -d checks if a directory exists. ! reverses it: "if NOT a directory"
     info "Creating Python virtual environment at tts_venv/..."
     "$PYTHON_BIN" -m venv "$VENV_DIR"
     # Use the compatible Python binary (not just 'python3') to create the venv.
     success "Virtual environment created"
   else
-    success "Virtual environment already exists"
+    success "Virtual environment already exists (Python $VENV_MAJOR.$VENV_MINOR)"
   fi
 
   # Install or update the TTS package inside the venv.
@@ -232,14 +256,19 @@ header "Step 4: Ollama (local LLM)"
 
 if ! command -v ollama &>/dev/null; then
   info "Installing Ollama..."
-  # The official Ollama install script — downloads and installs the binary.
-  curl -fsSL https://ollama.com/install.sh | sh
-  # -f = fail silently on HTTP errors (instead of showing the error page)
-  # -s = silent (no progress bar)
-  # -S = show error if -s is used (override silent for errors)
-  # -L = follow redirects
-  # | sh pipes the downloaded script directly to the shell to run it.
-  success "Ollama installed"
+  # On Arch Linux, ollama is in the official 'extra' repository.
+  # This is more reliable than the upstream curl install script, which can fail
+  # due to TLS/firewall issues on some servers.
+  if pacman -Si ollama &>/dev/null 2>&1; then
+    pacman -S --noconfirm ollama
+    success "Ollama installed via pacman"
+  else
+    # Fallback: ollama not in pacman repos — try the curl install script.
+    # This should rarely be needed on Arch, but handles edge cases.
+    warn "ollama not found in pacman repos — falling back to curl install script"
+    curl -fsSL https://ollama.com/install.sh | sh
+    success "Ollama installed via install script"
+  fi
 else
   success "Ollama already installed"
 fi
